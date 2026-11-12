@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>快递单号排版工具</title>
+<title>多功能排版工具</title>
 <link rel="icon" type="image/png" href="logo.png">
 <style>
   * { box-sizing: border-box; }
@@ -34,7 +34,7 @@
   }
   .sub { font-size: 13px; color: #6b7280; }
 
-  .modes { display: flex; gap: 8px; margin-bottom: 16px; }
+  .modes { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
   .mode {
     padding: 9px 18px;
     border: 1px solid #d1d5db;
@@ -44,6 +44,7 @@
     color: #4b5563;
     cursor: pointer;
     transition: .15s;
+    user-select: none;
   }
   .mode:hover { border-color: #93c5fd; }
   .mode.active {
@@ -51,6 +52,7 @@
     border-color: #2563eb;
     color: #fff;
     font-weight: 600;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, .3);
   }
 
   .cols { display: flex; gap: 16px; align-items: stretch; }
@@ -71,8 +73,9 @@
     justify-content: space-between;
     align-items: center;
     font-weight: 600;
+    gap: 8px;
   }
-  .count { font-size: 12px; color: #059669; font-weight: 400; }
+  .count { font-size: 12px; color: #059669; font-weight: 400; white-space: nowrap; }
   textarea {
     flex: 1;
     width: 100%;
@@ -125,34 +128,45 @@
     pointer-events: none;
   }
   .toast.show { transform: translate(-50%, 0); opacity: 1; }
+  @media (max-width: 760px) {
+    body { padding: 16px; }
+    .cols { flex-direction: column; }
+    .logo { width: 48px; height: 48px; border-radius: 13px; }
+    h1 { font-size: 19px; }
+    textarea { min-height: 240px; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="brand">
-    <img class="logo" src="logo.png" alt="快递单号排版工具">
+    <img class="logo" src="logo.png" alt="多功能排版工具">
     <div>
-      <h1>快递单号排版工具</h1>
-      <div class="sub">两种方向互转，几十个、几百个都能处理，顺序保持不变。</div>
+      <h1>多功能排版工具</h1>
+      <div class="sub">单号提取、横竖互转、去重、快递公司统计，几十个几百个都能处理。</div>
     </div>
   </div>
 
   <div class="modes">
-    <div class="mode active" data-mode="toColumn" onclick="setMode('toColumn')">逗号横排 → 一列</div>
-    <div class="mode" data-mode="toLine" onclick="setMode('toLine')">一列 → 逗号横排</div>
+    <div class="mode active" data-mode="extract" onclick="setMode('extract')">提取单号（去文字）</div>
+    <div class="mode" data-mode="toColumn" onclick="setMode('toColumn')">横排 → 一列</div>
+    <div class="mode" data-mode="toLine" onclick="setMode('toLine')">一列 → 横排</div>
+    <div class="mode" data-mode="dedupe" onclick="setMode('dedupe')">去重</div>
+    <div class="mode" data-mode="stats" onclick="setMode('stats')">公司统计</div>
   </div>
 
   <div class="cols">
     <div class="panel">
-      <h2><span id="inTitle">① 粘贴原始单号</span> <span class="count" id="inCount"></span></h2>
+      <h2><span id="inTitle">① 粘贴原始内容</span> <span class="count" id="inCount"></span></h2>
       <textarea id="in" placeholder=""></textarea>
       <div class="btns">
+        <button onclick="pasteFromClipboard()">读取剪贴板</button>
         <button onclick="clearAll()">清空</button>
       </div>
     </div>
 
     <div class="panel">
-      <h2><span id="outTitle">② 排版结果</span> <span class="count" id="outCount"></span></h2>
+      <h2><span id="outTitle">② 结果</span> <span class="count" id="outCount"></span></h2>
       <textarea id="out" readonly></textarea>
       <div class="btns">
         <button class="primary" onclick="copyAll()">复制全部（Ctrl+Enter）</button>
@@ -160,9 +174,7 @@
     </div>
   </div>
 
-  <div class="tip" id="tip">
-    说明：单号只做拆分和去空格，不会改动内容（前面是 JDX 也不会丢）；顺序保持你粘贴的先后顺序。
-  </div>
+  <div class="tip" id="tip"></div>
 </div>
 <div class="toast" id="toast">已复制</div>
 
@@ -176,66 +188,181 @@
   var outTitle = document.getElementById('outTitle');
   var tip = document.getElementById('tip');
 
-  var mode = 'toColumn';
+  var mode = 'extract';
 
-  var TEXT = {
+  var MODES = {
+    extract: {
+      inTitle: '① 粘贴原始内容（带公司名也行）',
+      outTitle: '② 提取结果（每行一个单号）',
+      inPh: '京东陆运到付,JDX060837841380\n京东空运到付,JDX060837568985\n京东陆运到付,JDX060837549060',
+      tip: '说明：自动把「京东陆运到付」「缩略语」等多余文字删掉，只留快递单号（形如 JDX060837841380 或 12~20 位纯数字），识别不了的内容会被忽略，顺序不变。'
+    },
     toColumn: {
       inTitle: '① 粘贴原始单号（逗号分隔）',
-      outTitle: '② 排版结果（每行一个）',
+      outTitle: '② 结果（每行一个）',
       inPh: '例如：JDX060835733816,JDX060835725302,JDX060835770527',
-      outUnit: '行',
       tip: '说明：逗号、中文逗号、空格、换行都能识别，拆成每行一个单号。复制后到 Excel 的「快递单号」列，点第一个单元格 Ctrl+V 就是纵向一列。'
     },
     toLine: {
       inTitle: '① 粘贴原始单号（每行一个）',
-      outTitle: '② 排版结果（逗号分隔一行）',
+      outTitle: '② 结果（逗号分隔一行）',
       inPh: '例如：\nJDX060835733816\nJDX060835725302\nJDX060835770527',
-      outUnit: '个',
-      tip: '说明：不管原始是每行一个还是中间有空行，都会合成一行，用英文逗号隔开，方便发给别人或粘到系统里查询。'
+      tip: '说明：竖排多行合成一行，用英文逗号隔开，方便发给别人或在系统里批量查询。'
+    },
+    dedupe: {
+      inTitle: '① 粘贴原始单号（任意分隔）',
+      outTitle: '② 去重结果（保留第一次出现）',
+      inPh: '例如：\nJDX060835733816\nJDX060835725302\nJDX060835733816',
+      tip: '说明：重复的单号只留一个，顺序按第一次出现的位置排，右侧会显示删掉了多少个重复。'
+    },
+    stats: {
+      inTitle: '① 粘贴原始内容（公司,单号 每行一条）',
+      outTitle: '② 统计结果',
+      inPh: '京东陆运到付,JDX060837841380\n京东空运到付,JDX060837568985\n京东陆运到付,JDX060837549060',
+      tip: '说明：按「快递公司」统计各有多少单，从多到少排列；如果只贴了单号，会按 JDX=京东、SF=顺丰、YT=圆通、ZTO=中通、STO=申通、YTO=韵达、JT=极兔、DBL=德邦、EMS=邮政 自动归类。'
     }
   };
 
-  function parse(raw) {
+  // 按常见分隔符拆成数组
+  function splitAll(raw) {
     return raw
-      .replace(/[\uFF0C\uFF1B\u3001]/g, ',')   // 中文逗号、分号、顿号
-      .split(/[\s,;]+/)                        // 逗号/分号/空白/换行
+      .replace(/[\uFF0C\uFF1B\u3001]/g, ',')
+      .split(/[\s,;]+/)
       .map(function (s) { return s.replace(/\s+/g, ''); })
       .filter(function (s) { return s.length > 0; });
   }
 
+  // 只挑出像快递单号的内容：JDX060837841380 / SF1234567890 / 12~20 位纯数字
+  function extractNumbers(raw) {
+    var list = [];
+    raw.split(/[^A-Za-z0-9]+/).forEach(function (t) {
+      if (!t) return;
+      if (/^[A-Za-z]{2,4}\d{9,18}$/.test(t) || /^\d{12,20}$/.test(t)) list.push(t);
+    });
+    return list;
+  }
+
+  function unique(list) {
+    var seen = {}, out = [];
+    list.forEach(function (v) {
+      if (!seen[v]) { seen[v] = 1; out.push(v); }
+    });
+    return out;
+  }
+
+  var PREFIX = [
+    [/^JDX|^JDV|^JD/, '京东'],
+    [/^SF/, '顺丰'],
+    [/^YT/, '圆通'],
+    [/^ZTO/, '中通'],
+    [/^STO/, '申通'],
+    [/^JT/, '极兔'],
+    [/^DBL/, '德邦'],
+    [/^EMS|^E[A-Z]/, '邮政'],
+    [/^DPK/, '德邦'],
+    [/^[A-Z]{2,4}/, '其他快递'],
+    [/^\d/, '其他快递']
+  ];
+
+  function companyOf(code) {
+    for (var i = 0; i < PREFIX.length; i++) {
+      if (PREFIX[i][0].test(code)) return PREFIX[i][1];
+    }
+    return '其他快递';
+  }
+
+  function buildStats(raw) {
+    var lines = raw.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+    var map = {}, order = [], total = 0;
+
+    lines.forEach(function (line) {
+      var company = '', code = '';
+      var m = line.match(/^(.+?)[,，\t|]+\s*([A-Za-z0-9\-]+)\s*$/);
+      if (m) {
+        company = m[1].replace(/[,\s]+$/, '').trim();
+        code = m[2];
+      } else {
+        var picked = extractNumbers(line);
+        if (!picked.length) return;
+        code = picked[0];
+        company = companyOf(code);
+      }
+      if (!company) company = '其他快递';
+      if (!map[company]) { map[company] = 0; order.push(company); }
+      map[company]++;
+      total++;
+    });
+
+    var arr = order.map(function (c) { return { name: c, n: map[c] }; });
+    arr.sort(function (a, b) { return b.n - a.n; });
+
+    var text = arr.map(function (x) { return x.name + '：' + x.n + ' 个'; }).join('\n');
+    if (arr.length) text += '\n合计：' + total + ' 个';
+    return { text: text, total: total, kinds: arr.length };
+  }
+
   function render() {
-    var list = parse(input.value);
-    output.value = mode === 'toColumn' ? list.join('\n') : list.join(',');
-    inCount.textContent = list.length ? list.length + ' 个' : '';
-    outCount.textContent = list.length ? list.length + ' 个' : '';
+    var raw = input.value;
+    var list, text, info = '';
+
+    if (mode === 'extract') {
+      list = extractNumbers(raw);
+      text = list.join('\n');
+      inCount.textContent = list.length ? '识别 ' + list.length + ' 个' : '';
+      outCount.textContent = list.length ? list.length + ' 个单号' : '';
+    } else if (mode === 'toColumn') {
+      list = splitAll(raw);
+      text = list.join('\n');
+      inCount.textContent = list.length ? list.length + ' 个' : '';
+      outCount.textContent = list.length ? list.length + ' 行' : '';
+    } else if (mode === 'toLine') {
+      list = splitAll(raw);
+      text = list.join(',');
+      inCount.textContent = list.length ? list.length + ' 个' : '';
+      outCount.textContent = list.length ? list.length + ' 个' : '';
+    } else if (mode === 'dedupe') {
+      var all = splitAll(raw);
+      list = unique(all);
+      text = list.join('\n');
+      info = all.length ? '共 ' + all.length + ' 个，删重复 ' + (all.length - list.length) + ' 个' : '';
+      inCount.textContent = all.length ? all.length + ' 个' : '';
+      outCount.textContent = info;
+    } else {
+      var st = buildStats(raw);
+      text = st.text;
+      inCount.textContent = st.total ? st.total + ' 条' : '';
+      outCount.textContent = st.kinds ? st.kinds + ' 家公司' : '';
+    }
+
+    output.value = text;
   }
 
   function setMode(m) {
     mode = m;
-    var t = TEXT[m];
+    var cfg = MODES[m];
     var nodes = document.querySelectorAll('.mode');
     for (var i = 0; i < nodes.length; i++) {
       nodes[i].classList.toggle('active', nodes[i].getAttribute('data-mode') === m);
     }
-    inTitle.textContent = t.inTitle;
-    outTitle.textContent = t.outTitle;
-    input.placeholder = t.inPh;
-    tip.textContent = t.tip;
+    inTitle.textContent = cfg.inTitle;
+    outTitle.textContent = cfg.outTitle;
+    input.placeholder = cfg.inPh;
+    tip.textContent = cfg.tip;
     render();
   }
 
   function copyAll() {
     var text = output.value;
-    if (!text) { showToast('还没有可复制的单号', true); return; }
+    if (!text) { showToast('还没有可复制的内容', true); return; }
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(text).then(function () { showToast('已复制，去粘贴吧'); },
-        function () { fallbackCopy(text); });
+        function () { fallbackCopy(); });
     } else {
-      fallbackCopy(text);
+      fallbackCopy();
     }
   }
 
-  function fallbackCopy(text) {
+  function fallbackCopy() {
     output.focus();
     output.select();
     try {
@@ -245,6 +372,22 @@
       showToast('复制失败，请手动全选复制', true);
     }
     output.setSelectionRange(0, 0);
+  }
+
+  function pasteFromClipboard() {
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      showToast('这个浏览器不支持，请直接 Ctrl+V 粘贴', true);
+      input.focus();
+      return;
+    }
+    navigator.clipboard.readText().then(function (t) {
+      input.value = t;
+      render();
+      showToast('已读取剪贴板');
+    }, function () {
+      showToast('读取失败，请直接 Ctrl+V 粘贴', true);
+      input.focus();
+    });
   }
 
   function clearAll() {
@@ -268,7 +411,7 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); copyAll(); }
   });
 
-  setMode('toColumn');
+  setMode('extract');
 </script>
 </body>
 </html>
