@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>快递单号排版工具</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+    background: #f3f5f8;
+    color: #1f2937;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { font-size: 13px; color: #6b7280; margin-bottom: 14px; }
+
+  .modes { display: flex; gap: 8px; margin-bottom: 16px; }
+  .mode {
+    padding: 9px 18px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    border-radius: 999px;
+    font-size: 14px;
+    color: #4b5563;
+    cursor: pointer;
+    transition: .15s;
+  }
+  .mode:hover { border-color: #93c5fd; }
+  .mode.active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .cols { display: flex; gap: 16px; align-items: stretch; }
+  .panel {
+    flex: 1;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+  }
+  .panel h2 {
+    font-size: 14px;
+    margin: 0 0 8px;
+    color: #374151;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+  }
+  .count { font-size: 12px; color: #059669; font-weight: 400; }
+  textarea {
+    flex: 1;
+    width: 100%;
+    min-height: 420px;
+    resize: vertical;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 15px;
+    line-height: 1.7;
+    outline: none;
+    color: #111827;
+    background: #fcfcfd;
+  }
+  textarea:focus { border-color: #2563eb; background: #fff; }
+  #out { background: #f8fafc; }
+  .btns { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  button {
+    padding: 9px 18px;
+    font-size: 14px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    color: #374151;
+    cursor: pointer;
+    transition: .15s;
+  }
+  button:hover { background: #f3f4f6; }
+  button.primary {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+    font-weight: 600;
+  }
+  button.primary:hover { background: #1d4ed8; }
+  .tip { font-size: 12px; color: #9ca3af; margin-top: 12px; line-height: 1.8; }
+  .toast {
+    position: fixed;
+    left: 50%;
+    top: 24px;
+    transform: translate(-50%, -80px);
+    background: #059669;
+    color: #fff;
+    padding: 10px 22px;
+    border-radius: 8px;
+    font-size: 14px;
+    opacity: 0;
+    transition: .25s;
+    pointer-events: none;
+  }
+  .toast.show { transform: translate(-50%, 0); opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>快递单号排版工具</h1>
+  <div class="sub">两种方向互转，几十个、几百个都能处理，顺序保持不变。</div>
+
+  <div class="modes">
+    <div class="mode active" data-mode="toColumn" onclick="setMode('toColumn')">逗号横排 → 一列</div>
+    <div class="mode" data-mode="toLine" onclick="setMode('toLine')">一列 → 逗号横排</div>
+  </div>
+
+  <div class="cols">
+    <div class="panel">
+      <h2><span id="inTitle">① 粘贴原始单号</span> <span class="count" id="inCount"></span></h2>
+      <textarea id="in" placeholder=""></textarea>
+      <div class="btns">
+        <button onclick="clearAll()">清空</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><span id="outTitle">② 排版结果</span> <span class="count" id="outCount"></span></h2>
+      <textarea id="out" readonly></textarea>
+      <div class="btns">
+        <button class="primary" onclick="copyAll()">复制全部（Ctrl+Enter）</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tip" id="tip">
+    说明：单号只做拆分和去空格，不会改动内容（前面是 JDX 也不会丢）；顺序保持你粘贴的先后顺序。
+  </div>
+</div>
+<div class="toast" id="toast">已复制</div>
+
+<script>
+  var input = document.getElementById('in');
+  var output = document.getElementById('out');
+  var inCount = document.getElementById('inCount');
+  var outCount = document.getElementById('outCount');
+  var toast = document.getElementById('toast');
+  var inTitle = document.getElementById('inTitle');
+  var outTitle = document.getElementById('outTitle');
+  var tip = document.getElementById('tip');
+
+  var mode = 'toColumn';
+
+  var TEXT = {
+    toColumn: {
+      inTitle: '① 粘贴原始单号（逗号分隔）',
+      outTitle: '② 排版结果（每行一个）',
+      inPh: '例如：JDX060835733816,JDX060835725302,JDX060835770527',
+      outUnit: '行',
+      tip: '说明：逗号、中文逗号、空格、换行都能识别，拆成每行一个单号。复制后到 Excel 的「快递单号」列，点第一个单元格 Ctrl+V 就是纵向一列。'
+    },
+    toLine: {
+      inTitle: '① 粘贴原始单号（每行一个）',
+      outTitle: '② 排版结果（逗号分隔一行）',
+      inPh: '例如：\nJDX060835733816\nJDX060835725302\nJDX060835770527',
+      outUnit: '个',
+      tip: '说明：不管原始是每行一个还是中间有空行，都会合成一行，用英文逗号隔开，方便发给别人或粘到系统里查询。'
+    }
+  };
+
+  function parse(raw) {
+    return raw
+      .replace(/[\uFF0C\uFF1B\u3001]/g, ',')   // 中文逗号、分号、顿号
+      .split(/[\s,;]+/)                        // 逗号/分号/空白/换行
+      .map(function (s) { return s.replace(/\s+/g, ''); })
+      .filter(function (s) { return s.length > 0; });
+  }
+
+  function render() {
+    var list = parse(input.value);
+    output.value = mode === 'toColumn' ? list.join('\n') : list.join(',');
+    inCount.textContent = list.length ? list.length + ' 个' : '';
+    outCount.textContent = list.length ? list.length + ' 个' : '';
+  }
+
+  function setMode(m) {
+    mode = m;
+    var t = TEXT[m];
+    var nodes = document.querySelectorAll('.mode');
+    for (var i = 0; i < nodes.length; i++) {
+      nodes[i].classList.toggle('active', nodes[i].getAttribute('data-mode') === m);
+    }
+    inTitle.textContent = t.inTitle;
+    outTitle.textContent = t.outTitle;
+    input.placeholder = t.inPh;
+    tip.textContent = t.tip;
+    render();
+  }
+
+  function copyAll() {
+    var text = output.value;
+    if (!text) { showToast('还没有可复制的单号', true); return; }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { showToast('已复制，去粘贴吧'); },
+        function () { fallbackCopy(text); });
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function fallbackCopy(text) {
+    output.focus();
+    output.select();
+    try {
+      document.execCommand('copy');
+      showToast('已复制，去粘贴吧');
+    } catch (e) {
+      showToast('复制失败，请手动全选复制', true);
+    }
+    output.setSelectionRange(0, 0);
+  }
+
+  function clearAll() {
+    input.value = '';
+    render();
+    input.focus();
+  }
+
+  var timer = null;
+  function showToast(msg, warn) {
+    toast.textContent = msg;
+    toast.style.background = warn ? '#dc2626' : '#059669';
+    toast.classList.add('show');
+    clearTimeout(timer);
+    timer = setTimeout(function () { toast.classList.remove('show'); }, 2000);
+  }
+
+  input.addEventListener('input', render);
+  input.addEventListener('paste', function () { setTimeout(render, 0); });
+  document.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); copyAll(); }
+  });
+
+  setMode('toColumn');
+</script>
+</body>
+</html>
